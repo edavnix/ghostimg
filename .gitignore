@@ -1,0 +1,22 @@
+# Gitignore for ghostimg
+# Documentation: https://git-scm.com/docs/gitignore
+
+# CMake build directories
+build/
+img/
+
+# Temporary or backup files
+*~
+*.temp
+*.tmp
+*.bak
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
