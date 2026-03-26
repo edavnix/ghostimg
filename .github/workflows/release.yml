@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ── Linux ──────────────────────────────────────────────────────────────────
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libjpeg-turbo8-dev \
+            libpng-dev \
+            libwebp-dev
+
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          cp build/ghostimg ghostimg-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ghostimg-linux-x86_64
+          path: ghostimg-linux-x86_64
+
+  # ── macOS universal (single Apple Silicon runner) ──────────────────────────
+  # arm64 built natively with /opt/homebrew libs.
+  # x86_64 built via Rosetta + x86_64 Homebrew at /usr/local.
+  # lipo merges both into a single universal binary.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arm64 dependencies
+        run: brew install jpeg-turbo libpng webp 2>/dev/null || true
+
+      - name: Install x86_64 Homebrew and dependencies
+        run: |
+          # Install x86_64 Homebrew under Rosetta if not present
+          if [ ! -f /usr/local/bin/brew ]; then
+            arch -x86_64 /bin/bash -c \
+              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          arch -x86_64 /usr/local/bin/brew install jpeg-turbo libpng webp \
+            2>/dev/null || true
+
+      - name: Build arm64
+        run: |
+          cmake -B build-arm -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_PREFIX_PATH=/opt/homebrew
+          cmake --build build-arm
+
+      - name: Build x86_64
+        run: |
+          cmake -B build-x86 -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_PREFIX_PATH=/usr/local
+          cmake --build build-x86
+
+      - name: Merge universal binary
+        run: |
+          lipo -create build-arm/ghostimg build-x86/ghostimg \
+            -output ghostimg-macos-universal
+          lipo -info ghostimg-macos-universal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ghostimg-macos-universal
+          path: ghostimg-macos-universal
+
+  # ── Windows x86-64 (MSYS2 pre-built packages) ─────────────────────────────
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-libwebp
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G Ninja
+          cmake --build build
+          cp build/ghostimg.exe ghostimg-windows-x86_64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ghostimg-windows-x86_64.exe
+          path: ghostimg-windows-x86_64.exe
+
+  # ── Publish Release ────────────────────────────────────────────────────────
+  release:
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/ghostimg-linux-x86_64
+            dist/ghostimg-macos-universal
+            dist/ghostimg-windows-x86_64.exe
